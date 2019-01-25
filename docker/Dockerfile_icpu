@@ -1,0 +1,71 @@
+FROM ubuntu:16.04
+
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    PYTHONPATH=/home/app \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    APP_HOME=/home/app \
+    DEBIAN_FRONTEND=noninteractive
+
+ARG INTEL_CPU_CORE_DRIVER_RUNTIME_NAME=l_opencl_p_18.1.0.013
+ARG INTEL_CPU_CORE_DRIVER_RUNTIME_URL=http://registrationcenter-download.intel.com/akdlm/irc_nas/vcp/13793/${INTEL_CPU_CORE_DRIVER_RUNTIME_NAME}.tgz
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+        wget \
+        cpio \
+        libnuma-dev \
+        python3-tk \
+        opencl-headers \
+        python3-pip \
+        python3-setuptools \
+        python3-dev \
+        python3-tk \
+        build-essential \
+        lsb-core && \
+    rm -rf /var/lib/apt/lists/*
+
+
+# install intel driver runtime for CPU support
+WORKDIR ${APP_HOME}/intel_cpu
+COPY docker/intel_cpu_driver_install.cfg .
+RUN wget -qO- $INTEL_CPU_CORE_DRIVER_RUNTIME_URL | tar xvz -C ${APP_HOME}/intel_cpu/ && \
+    ${APP_HOME}/intel_cpu/$INTEL_CPU_CORE_DRIVER_RUNTIME_NAME/install.sh -s ${APP_HOME}/intel_cpu/intel_cpu_driver_install.cfg && \
+    rm -rf ${APP_HOME}/intel_cpu
+
+WORKDIR ${APP_HOME}
+
+# get eigen and pybind11
+RUN wget --no-check-certificate -q -O - https://github.com/eigenteam/eigen-git-mirror/archive/3.3.5.tar.gz  | tar zx && mv eigen-git-mirror-3.3.5 eigen &&\
+    wget --no-check-certificate -q -O - https://github.com/pybind/pybind11/archive/v2.2.4.tar.gz | tar zx && mv pybind11-2.2.4 pybind11
+
+# install python deps
+COPY requirements.in requirements.in
+RUN pip3 install --upgrade pip-tools && \
+    pip-compile --output-file requirements.txt requirements.in/base.txt && \
+    pip3 install -r requirements.txt && \
+    pip3 install pyopencl
+
+# build nbm_cpp.so
+COPY nbm/nbm_cpp nbm/nbm_cpp
+COPY CMakeLists.txt CMakeLists.txt
+RUN mkdir -p build && \
+	cd build && \
+	cmake -DPYTHON_EXECUTABLE:FILEPATH=`which python3` .. && \
+	make && \
+	cp *.so ../nbm
+
+WORKDIR ${APP_HOME}/nbm
+COPY nbm/__main__.py .
+COPY nbm/nbm_cl.py .
+COPY nbm/nbm_py.py .
+COPY nbm/nbm_t.cl .
+COPY nbm/nbm_t.cl.j2 .
+
+RUN apt-get -y purge cmake wget cpio
+
+CMD ["python3", "__main__.py"]

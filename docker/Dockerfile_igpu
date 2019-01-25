@@ -1,0 +1,47 @@
+FROM ubuntu:16.04
+
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    PYTHONPATH=/home/app \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    APP_HOME=/home/app \
+    DEBIAN_FRONTEND=noninteractive
+    # PIP_NO_CACHE_DIR=off
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        wget \
+        opencl-headers \
+        ocl-icd-opencl-dev \
+        python3-setuptools \
+        python3-dev \
+        python3-pip \
+        python3-tk && \
+    rm -rf /var/lib/apt/lists/*
+
+# install intel driver for integrated Graphics support
+WORKDIR ${APP_HOME}/intel_gpu/
+RUN wget --no-check-certificate https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-gmmlib_18.4.0.348_amd64.deb && \
+    wget --no-check-certificate https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-igc-core_18.48.1124_amd64.deb && \
+    wget --no-check-certificate https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-igc-opencl_18.48.1124_amd64.deb && \
+    wget --no-check-certificate https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-opencl_18.49.11968_amd64.deb && \
+    dpkg -i *.deb && \
+    rm -rf ${APP_HOME}/intel_gpu
+
+# install python deps
+WORKDIR ${APP_HOME}
+COPY Pipfile Pipfile
+COPY Pipfile.lock Pipfile.lock
+RUN pip3 install pipenv && \
+    pipenv install --deploy --system
+
+COPY README.md README.md
+COPY setup.py setup.py
+COPY nb_ocl nb_ocl
+
+# CMD ["python3", "__main__.py"]
+CMD ["bash"]

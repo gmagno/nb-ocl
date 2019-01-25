@@ -1,0 +1,13 @@
+.vscode/
+.venv/
+bak/
+build/
+docs/
+eigen/
+pybind11/
+.dockerignore
+.gitignore
+Dockerfile
+Makefile
+opencltutorial
+__pycache__

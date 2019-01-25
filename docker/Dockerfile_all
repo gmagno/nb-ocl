@@ -1,0 +1,93 @@
+FROM nvidia/opencl:devel-ubuntu16.04
+
+ENV NVIDIA_DRIVER_CAPABILITIES ${NVIDIA_DRIVER_CAPABILITIES},display
+
+ENV PYTHONFAULTHANDLER=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    PYTHONPATH=/home/app \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    APP_HOME=/home/app \
+    DEBIAN_FRONTEND=noninteractive
+
+ARG INTEL_CPU_CORE_DRIVER_RUNTIME_NAME=opencl_runtime_16.1_x64_ubuntu_5.2.0.10002
+ARG INTEL_CPU_CORE_DRIVER_RUNTIME_URL=http://registrationcenter-download.intel.com/akdlm/irc_nas/vcp/9019/${INTEL_CPU_CORE_DRIVER_RUNTIME_NAME}.tgz
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+        build-essential \
+        dkms \
+        linux-headers-`uname -r` \
+        cpio \
+        wget \
+        default-jre \
+        lsb-core \
+        mesa-utils \
+        libmtdev1 \
+        libsdl2-dev \
+        python3-setuptools \
+        python3-dev \
+        python3-pip \
+        python3-tk && \
+    rm -rf /var/lib/apt/lists/*
+
+# install intel driver for integrated Graphics support
+RUN mkdir -p ${APP_HOME}/intel_gpu/
+WORKDIR ${APP_HOME}/intel_gpu/
+RUN wget https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-gmmlib_18.4.0.348_amd64.deb
+RUN wget https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-igc-core_18.48.1124_amd64.deb
+RUN wget https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-igc-opencl_18.48.1124_amd64.deb
+RUN wget https://github.com/intel/compute-runtime/releases/download/18.49.11968/intel-opencl_18.49.11968_amd64.deb
+RUN dpkg -i *.deb
+RUN rm -rf ${APP_HOME}/intel_gpu
+
+# install intel driver runtime for CPU support
+WORKDIR ${APP_HOME}/intel_cpu
+COPY docker/intel_cpu_driver_install.cfg .
+RUN wget -qO- $INTEL_CPU_CORE_DRIVER_RUNTIME_URL | tar xvz -C ${APP_HOME}/intel_cpu/
+RUN ${APP_HOME}/intel_cpu/$INTEL_CPU_CORE_DRIVER_RUNTIME_NAME/install.sh -s ${APP_HOME}/intel_cpu/intel_cpu_driver_install.cfg
+RUN rm -rf ${APP_HOME}/intel_cpu
+
+WORKDIR ${APP_HOME}
+
+# get eigen and pybind11
+RUN wget -q -O - https://github.com/eigenteam/eigen-git-mirror/archive/3.3.5.tar.gz  | tar zx && mv eigen-git-mirror-3.3.5 eigen
+RUN wget -q -O - https://github.com/pybind/pybind11/archive/v2.2.4.tar.gz | tar zx && mv pybind11-2.2.4 pybind11
+
+# install python deps
+COPY requirements.in requirements.in
+RUN pip3 install --upgrade pip-tools && \
+    pip-compile --output-file requirements.txt requirements.in/base.txt && \
+    pip3 install -r requirements.txt && \
+    pip3 install pyopencl
+
+COPY nbm/nbm_cpp nbm/nbm_cpp
+COPY CMakeLists.txt CMakeLists.txt
+
+# build nbm_cpp.so
+RUN mkdir -p build && \
+	cd build && \
+	cmake -DPYTHON_EXECUTABLE:FILEPATH=`which python3` .. && \
+	make && \
+	cp *.so ../nbm
+
+WORKDIR ${APP_HOME}/nbm
+COPY nbm/__main__.py .
+COPY nbm/nbm_cl.py .
+COPY nbm/nbm_py.py .
+COPY nbm/nbm_t.cl .
+COPY nbm/nbm_t.cl.j2 .
+
+# note: run as non-root in order to use the nvidia GPU
+# RUN groupadd -g 999 app && useradd -r -u 999 -g app app
+# RUN chown -R app:app .
+# RUN chown -R app:app /home/app
+# USER app
+
+RUN apt-get -y purge cmake wget cpio
+
+CMD ["python3", "__main__.py"]
