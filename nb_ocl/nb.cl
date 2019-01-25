@@ -1,0 +1,108 @@
+#pragma OPENCL EXTENSION cl_khr_fp64: enable
+#define PYOPENCL_DEFINE_CDOUBLE
+#include <pyopencl-complex.h>
+
+
+#ifdef PRECISION_DOUBLE
+	typedef cdouble_t complex_t;
+	typedef double real_t;
+    #define CFUNC(fname) cdouble_##fname
+    #pragma message "Using precision: double"
+#else
+	typedef cfloat_t complex_t;
+	typedef float real_t;
+    #define CFUNC(fname) cfloat_##fname
+    #pragma message "Using precision: float"
+#endif
+
+
+complex_t polyval(
+    __global int *coefs, const uint ncoefs, const complex_t z
+) {
+    complex_t f = CFUNC(new)(0.0, 0.0);
+
+    for(int i=0; i <= ncoefs-1; i++)
+    {
+        //f = coefs[i] + f * z;
+        f =  CFUNC(addr)(CFUNC(mul)(f, z), coefs[i]);
+    }
+    return f;
+}
+
+complex_t polyderval(
+    __global int *coefs, const uint ncoefs, const complex_t z
+) {
+    complex_t df = CFUNC(new)(0.0, 0.0);
+
+    // polyval(polyder())
+    for(int i=0; i <= ncoefs-2; i++)
+    {
+        //df = coefs[i]*(ncoefs-1-i) + df * z;
+        df =  CFUNC(addr)(CFUNC(mul)(df, z), coefs[i]*(ncoefs-1-i));
+    }
+    return df;
+}
+
+__kernel void compute(
+    const uint imw,
+    const uint imh,
+    __global int *coefs,
+    const uint ncoefs,
+    __global complex_t *roots,
+    const real_t crmin,
+    const real_t crmax,
+    const real_t cimin,
+    const real_t cimax,
+    const uint itmax,
+    const real_t tolerance,
+    __global float *h_out,
+    //__global float *s_out,
+    __global float *v_out
+)
+{
+    int x = get_global_id(0);
+    int y = get_global_id(1);
+
+    real_t zr = crmin + (crmax - crmin) / imw * x;
+    real_t zi = cimax - (cimax - cimin) / imh * y;
+    complex_t z = CFUNC(new)(zr, zi);
+    complex_t f, df, f_curr;
+
+    int k=0;
+    while(k < itmax) {
+        f = CFUNC(new)(0.0, 0.0);
+        df = CFUNC(new)(0.0, 0.0);
+        //f = polyval(coefs, ncoefs, z);
+        f = {{ cpolyval_z }}
+        //df = polyderval(coefs, ncoefs, z);
+        df = {{ cpolyderval_z }}
+
+        if(CFUNC(abs)(df) != 0.0) {
+            z = CFUNC(sub)(z, CFUNC(divide)(f, df));
+            //f_curr = polyval(coefs, ncoefs, z);
+            f_curr = {{ cpolyval_z }}
+
+            if(CFUNC(abs)(f_curr) <= tolerance) {
+                // iterate over roots
+                real_t diff = CFUNC(abs)(CFUNC(sub)(roots[0], z));
+                complex_t root=roots[0];
+                int root_idx=0;
+                for(int r=0; r<ncoefs-1; r++) {
+                    if(CFUNC(abs)(CFUNC(sub)(roots[r], z)) < diff) {
+                        diff = CFUNC(abs)(CFUNC(sub)(roots[r], z));
+                        root = roots[r];
+                        root_idx = r;
+                    }
+                }
+
+                float h=(float)root_idx / ((float)ncoefs-1.0);
+                float v = 1.0 - (float)k / (float)itmax;
+                h_out[x+y*imw] = h;
+                //s_out[x+y*imw] = 1.0;
+                v_out[x+y*imw] = v;
+                break;
+            }
+        }
+        k++;
+    }
+}
