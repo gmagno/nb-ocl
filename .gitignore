@@ -1,0 +1,15 @@
+.venv/
+eigen/
+pybind11/
+out/
+bak/
+
+build/
+dist/
+_build/
+_generate/
+*.so
+*.py[cod]
+*.egg-info
+
+deps/
