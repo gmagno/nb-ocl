@@ -17,19 +17,20 @@ def compute(
     itmax=30, tol=1e-6,
     precision='float',  # either 'float' or 'double'
 ):
-    coefs = np.array(coefs, dtype=np.uint32)
+    coefs_t = np.float32 if precision=='float' else np.float64
+    coefs = np.array(coefs, dtype=coefs_t)
     roots = np.roots(coefs)  # return a list of np.complex128
     roots = roots.astype(
         np.complex64 if precision=='float' else np.complex128
     )
     os.environ['PYOPENCL_COMPILER_OUTPUT'] = '1'
 
-    # platform = cl.get_platforms()[0]
+    platform = cl.get_platforms()[0]
     # # print('platform: {}'.format(platform))
-    # device = platform.get_devices()[0]
+    device = platform.get_devices()[0]
     # # print('device: {}'.format(device))
-    # context = cl.Context([device])
-    context = cl.create_some_context()
+    context = cl.Context([device])
+    # context = cl.create_some_context()
     # print('context: {}'.format(context))
     queue = cl.CommandQueue(context)
 
@@ -68,6 +69,7 @@ def compute(
                 ret = cadd(cnew(c * (len(p)-1-i), 0.0), cmul(ret, x))
         return ret + ';'
 
+    # kernel_file = 'nb.cl'
     kernel_file = 'nb.cl.j2'
     with open(kernel_file, 'r') as f:
         kernel_source = f.read()
@@ -94,7 +96,7 @@ def compute(
     program.compute.set_scalar_arg_dtypes([
         np.uint32,          # imw
         np.uint32,          # imh
-        None,               # const int *coefs
+        None,               # const float/double *coefs
         np.uint32,          # ncoefs
         None,               # roots
         crmin_t,            # crmin
@@ -142,7 +144,7 @@ def compute(
         queue, globalrange, localrange,
         np.uint32(imw),         # const uint imw
         np.uint32(imh),         # const uint imh
-        coefs_buf,              # __global int *coefs
+        coefs_buf,              # __global float/double *coefs
         np.uint32(len(coefs)),  # const uint ncoefs
         roots_buf,              # __global cdouble_t *roots
         crmin_t(crmin),         # const float crmin
@@ -169,20 +171,50 @@ def compute(
 
 def main():
     os.environ['PYOPENCL_COMPILER_OUTPUT'] = '1'
+
+    # crmin = -10.0
+    # crmax = 10.0
+    # cimin = -5.0
+    # cimax = 5.0
+    # ratio = (crmax - crmin) / (cimax - cimin)
+    # imw = 1024
+
+    # crmin = -10.0
+    # crmax = 10.0
+    # cimin = -7.0
+    # cimax = 7.0
+    # ratio = (crmax - crmin) / (cimax - cimin)
+
+    crmin = -10.0
+    crmax = 10.0
+    cimin = -5.0
+    cimax = 5.0
+    ratio = (crmax - crmin) / (cimax - cimin)
+
+    # imw = 1024
+    # imw = 2048
+    # imw = 4096
+    imw = 8192
+
+    import time
+    t = time.time()
     hsv = compute(
-        imw=32, imh=32,
+        imw=imw, imh=int(imw/ratio),
         coefs=[1, 0, 0, 0, 0, 0, 1],
-        crmin=-5.0, crmax=5.0,
-        cimin=-5.0, cimax=5.0,
+        crmin=crmin, crmax=crmax,
+        cimin=cimin, cimax=cimax,
         itmax=30, tol=1e-6,
         precision='float',
     )
+    e = time.time() - t
+    print('Elapsed time: %.2f' %(e,))
 
     import matplotlib as mpl
     import matplotlib.pyplot as plt
-    plt.figure('nbm_cl')
+    fig = plt.figure('nbm_cl')
     plt.imshow(
         mpl.colors.hsv_to_rgb(hsv),
+        # cmap=plt.get_cmap('viridis')
         # interpolation='bilinear',
     )
     plt.tight_layout()
